@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
 	app,
 	BrowserWindow,
+	globalShortcut,
 	ipcMain,
 	Menu,
 	nativeImage,
@@ -272,6 +273,30 @@ function setupApplicationMenu() {
 	Menu.setApplicationMenu(menu);
 }
 
+const PAUSE_SHORTCUT = "`";
+
+function registerPauseShortcut() {
+	if (globalShortcut.isRegistered(PAUSE_SHORTCUT)) return;
+	try {
+		const ok = globalShortcut.register(PAUSE_SHORTCUT, () => {
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send("toggle-pause-shortcut");
+			}
+		});
+		if (!ok) {
+			console.warn("Failed to register pause shortcut — it may be in use by another app.");
+		}
+	} catch (err) {
+		console.warn("Error registering pause shortcut:", err);
+	}
+}
+
+function unregisterPauseShortcut() {
+	if (globalShortcut.isRegistered(PAUSE_SHORTCUT)) {
+		globalShortcut.unregister(PAUSE_SHORTCUT);
+	}
+}
+
 function createTray() {
 	tray = new Tray(defaultTrayIcon);
 	tray.on("click", () => {
@@ -423,6 +448,10 @@ app.on("window-all-closed", () => {
 	app.quit();
 });
 
+app.on("will-quit", () => {
+	globalShortcut.unregisterAll();
+});
+
 app.on("activate", () => {
 	// On OS X it's common to re-create a window in the app when the
 	// dock icon is clicked and there are no other windows open.
@@ -539,7 +568,10 @@ app.whenReady().then(async () => {
 			selectedSourceName = sourceName;
 			if (!tray) createTray();
 			updateTrayMenu(recording);
-			if (!recording) {
+			if (recording) {
+				registerPauseShortcut();
+			} else {
+				unregisterPauseShortcut();
 				showMainWindow();
 			}
 		},

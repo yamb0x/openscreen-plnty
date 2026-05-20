@@ -118,6 +118,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("stop-recording-from-tray", listener);
 		return () => ipcRenderer.removeListener("stop-recording-from-tray", listener);
 	},
+	onTogglePauseShortcut: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("toggle-pause-shortcut", listener);
+		return () => ipcRenderer.removeListener("toggle-pause-shortcut", listener);
+	},
 	openExternalUrl: (url: string) => {
 		return ipcRenderer.invoke("open-external-url", url);
 	},

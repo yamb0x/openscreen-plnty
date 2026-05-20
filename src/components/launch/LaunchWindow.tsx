@@ -326,6 +326,24 @@ export function LaunchWindow() {
 		return () => clearInterval(interval);
 	}, []);
 
+	useEffect(() => {
+		if (!canPauseRecording) return;
+		const cleanup = window.electronAPI?.onTogglePauseShortcut?.(() => {
+			togglePaused();
+		});
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "`" && recording) {
+				e.preventDefault();
+				togglePaused();
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => {
+			cleanup?.();
+			window.removeEventListener("keydown", onKey);
+		};
+	}, [togglePaused, recording, canPauseRecording]);
+
 	const openSourceSelector = () => {
 		if (window.electronAPI) {
 			window.electronAPI.openSourceSelector();

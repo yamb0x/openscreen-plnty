@@ -1,16 +1,13 @@
-import { Check, ChevronDown, Languages } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { BsPauseCircle, BsPlayCircle, BsRecordCircle } from "react-icons/bs";
-import { FaRegStopCircle } from "react-icons/fa";
+import { ChevronDown, Languages } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { BsRecordCircle } from "react-icons/bs";
+import { FaPause, FaPlay, FaRegStopCircle } from "react-icons/fa";
 import { FaFolderOpen } from "react-icons/fa6";
 import { FiMinus, FiX } from "react-icons/fi";
 import {
-	MdCancel,
 	MdMic,
 	MdMicOff,
 	MdMonitor,
-	MdMouse,
 	MdRestartAlt,
 	MdVideocam,
 	MdVideocamOff,
@@ -20,8 +17,9 @@ import {
 } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
-import { getAvailableLocales, getLocaleName } from "@/i18n/loader";
-import { nativeBridgeClient } from "@/native";
+import { type Locale, SUPPORTED_LOCALES } from "@/i18n/config";
+import { getLocaleName } from "@/i18n/loader";
+import { isMac as getIsMac } from "@/utils/platformUtils";
 import { useAudioLevelMeter } from "../../hooks/useAudioLevelMeter";
 import { useCameraDevices } from "../../hooks/useCameraDevices";
 import { useMicrophoneDevices } from "../../hooks/useMicrophoneDevices";
@@ -29,7 +27,6 @@ import { useScreenRecorder } from "../../hooks/useScreenRecorder";
 import { requestCameraAccess } from "../../lib/requestCameraAccess";
 import { formatTimePadded } from "../../utils/timeUtils";
 import { AudioLevelMeter } from "../ui/audio-level-meter";
-import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
 import styles from "./LaunchWindow.module.css";
 
@@ -44,13 +41,11 @@ const ICON_CONFIG = {
 	micOff: { icon: MdMicOff, size: ICON_SIZE },
 	webcamOn: { icon: MdVideocam, size: ICON_SIZE },
 	webcamOff: { icon: MdVideocamOff, size: ICON_SIZE },
-	cursor: { icon: MdMouse, size: ICON_SIZE },
-	pause: { icon: BsPauseCircle, size: ICON_SIZE },
-	resume: { icon: BsPlayCircle, size: ICON_SIZE },
 	stop: { icon: FaRegStopCircle, size: ICON_SIZE },
 	restart: { icon: MdRestartAlt, size: ICON_SIZE },
-	cancel: { icon: MdCancel, size: ICON_SIZE },
 	record: { icon: BsRecordCircle, size: ICON_SIZE },
+	pause: { icon: FaPause, size: ICON_SIZE },
+	play: { icon: FaPlay, size: ICON_SIZE },
 	videoFile: { icon: MdVideoFile, size: ICON_SIZE },
 	folder: { icon: FaFolderOpen, size: ICON_SIZE },
 	minimize: { icon: FiMinus, size: ICON_SIZE },
@@ -65,57 +60,42 @@ function getIcon(name: IconName, className?: string) {
 }
 
 const hudGroupClasses =
-	"flex items-center gap-0.5 rounded-xl border border-white/[0.07] bg-white/[0.045] transition-colors duration-150 hover:bg-white/[0.075]";
+	"flex items-center gap-0.5 bg-white/5 rounded-full transition-colors duration-150 hover:bg-white/[0.08]";
 
 const hudIconBtnClasses =
-	"flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-150 cursor-pointer text-white hover:bg-white/10 active:scale-95";
-
-const hudAuxIconBtnClasses =
-	"flex h-7 w-7 items-center justify-center rounded-lg transition-colors duration-150 text-white/55 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed";
+	"flex items-center justify-center p-2 rounded-full transition-all duration-150 cursor-pointer text-white hover:bg-white/10 hover:scale-[1.08] active:scale-95";
 
 const windowBtnClasses =
-	"flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-150 cursor-pointer opacity-50 hover:opacity-90 hover:bg-white/[0.08]";
-
-const hudSidebarClasses = "ml-0.5 pl-1.5 border-l border-white/10 flex items-center gap-0.5";
+	"flex items-center justify-center p-2 rounded-full transition-all duration-150 cursor-pointer opacity-50 hover:opacity-90 hover:bg-white/[0.08]";
 
 export function LaunchWindow() {
 	const t = useScopedT("launch");
-	const availableLocales = getAvailableLocales();
-	const {
-		locale,
-		setLocale,
-		systemLocaleSuggestion,
-		acceptSystemLocaleSuggestion,
-		dismissSystemLocaleSuggestion,
-		resolveSystemLocaleSuggestion,
-	} = useI18n();
-	const suggestedLanguageName = systemLocaleSuggestion ? getLocaleName(systemLocaleSuggestion) : "";
-	const activeLanguageLabel = getLocaleName(locale).split(/\s+/)[0] || locale.toUpperCase();
+	const { locale, setLocale } = useI18n();
+	const [isMac, setIsMac] = useState(false);
+
+	useEffect(() => {
+		getIsMac().then(setIsMac);
+	}, []);
 
 	const {
 		recording,
 		paused,
-		elapsedSeconds,
+		togglePause,
 		toggleRecording,
-		togglePaused,
-		canPauseRecording,
 		restartRecording,
-		cancelRecording,
 		microphoneEnabled,
 		setMicrophoneEnabled,
 		microphoneDeviceId,
 		setMicrophoneDeviceId,
-		setMicrophoneDeviceName,
 		systemAudioEnabled,
 		setSystemAudioEnabled,
 		webcamEnabled,
 		setWebcamEnabled,
 		webcamDeviceId,
 		setWebcamDeviceId,
-		setWebcamDeviceName,
-		cursorCaptureMode,
-		setCursorCaptureMode,
 	} = useScreenRecorder();
+	const [recordingStart, setRecordingStart] = useState<number | null>(null);
+	const [elapsed, setElapsed] = useState(0);
 
 	const showMicControls = microphoneEnabled && !recording;
 	const showWebcamControls = webcamEnabled && !recording;
@@ -127,19 +107,6 @@ export function LaunchWindow() {
 	const [isWebcamHovered, setIsWebcamHovered] = useState(false);
 	const [isWebcamFocused, setIsWebcamFocused] = useState(false);
 	const webcamExpanded = isWebcamHovered || isWebcamFocused;
-	const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
-	const [supportsCursorModeToggle, setSupportsCursorModeToggle] = useState(false);
-	const languageTriggerRef = useRef<HTMLButtonElement | null>(null);
-	const languageMenuPanelRef = useRef<HTMLDivElement | null>(null);
-	const [languageMenuStyle, setLanguageMenuStyle] = useState<{
-		right: number;
-		top: number;
-		maxHeight: number;
-	}>({
-		right: 12,
-		top: 12,
-		maxHeight: 240,
-	});
 
 	const {
 		devices: micDevices,
@@ -157,16 +124,14 @@ export function LaunchWindow() {
 	const selectedMicLabel =
 		micDevices.find((d) => d.deviceId === (microphoneDeviceId || selectedMicId))?.label ||
 		t("audio.defaultMicrophone");
-	const selectedCameraDevice = cameraDevices.find(
-		(d) => d.deviceId === (webcamDeviceId || selectedCameraId),
-	);
 	const selectedCameraLabel = isCameraDevicesLoading
 		? t("webcam.searching")
 		: cameraDevicesError
 			? t("webcam.unavailable")
 			: cameraDevices.length === 0
 				? t("webcam.noneFound")
-				: selectedCameraDevice?.label || t("webcam.defaultCamera");
+				: cameraDevices.find((d) => d.deviceId === (webcamDeviceId || selectedCameraId))?.label ||
+					t("webcam.defaultCamera");
 
 	const { level } = useAudioLevelMeter({
 		enabled: showMicControls,
@@ -176,36 +141,46 @@ export function LaunchWindow() {
 	useEffect(() => {
 		if (selectedMicId && selectedMicId !== "default") {
 			setMicrophoneDeviceId(selectedMicId);
-			setMicrophoneDeviceName(micDevices.find((d) => d.deviceId === selectedMicId)?.label);
 		}
-	}, [selectedMicId, micDevices, setMicrophoneDeviceId, setMicrophoneDeviceName]);
+	}, [selectedMicId, setMicrophoneDeviceId]);
 
 	useEffect(() => {
 		if (selectedCameraId) {
 			setWebcamDeviceId(selectedCameraId);
-			setWebcamDeviceName(cameraDevices.find((d) => d.deviceId === selectedCameraId)?.label);
 		}
-	}, [selectedCameraId, cameraDevices, setWebcamDeviceId, setWebcamDeviceName]);
+	}, [selectedCameraId, setWebcamDeviceId]);
+
+	const pauseStartRef = useRef<number | null>(null);
 
 	useEffect(() => {
-		let cancelled = false;
-		nativeBridgeClient.system
-			.getPlatform()
-			.then((platform) => {
-				if (!cancelled) {
-					setSupportsCursorModeToggle(platform === "win32" || platform === "darwin");
-				}
-			})
-			.catch(() => {
-				if (!cancelled) {
-					setSupportsCursorModeToggle(false);
-				}
-			});
+		if (!recording) return;
+		if (paused) {
+			pauseStartRef.current = Date.now();
+		} else if (pauseStartRef.current !== null && recordingStart) {
+			setRecordingStart(recordingStart + (Date.now() - pauseStartRef.current));
+			pauseStartRef.current = null;
+		}
+	}, [paused, recording, recordingStart]);
 
+	useEffect(() => {
+		let timer: NodeJS.Timeout | null = null;
+		if (recording && !paused) {
+			if (!recordingStart) setRecordingStart(Date.now());
+			timer = setInterval(() => {
+				if (recordingStart) {
+					setElapsed(Math.floor((Date.now() - recordingStart) / 1000));
+				}
+			}, 1000);
+		} else if (!recording) {
+			setRecordingStart(null);
+			setElapsed(0);
+			pauseStartRef.current = null;
+			if (timer) clearInterval(timer);
+		}
 		return () => {
-			cancelled = true;
+			if (timer) clearInterval(timer);
 		};
-	}, []);
+	}, [recording, paused, recordingStart]);
 
 	useEffect(() => {
 		if (!import.meta.env.DEV) {
@@ -218,93 +193,24 @@ export function LaunchWindow() {
 	}, []);
 
 	useEffect(() => {
-		if (!isLanguageMenuOpen) return;
-
-		const handlePointerDown = (event: PointerEvent) => {
-			const target = event.target as Node;
-			const clickedTrigger = languageTriggerRef.current?.contains(target);
-			const clickedMenu = languageMenuPanelRef.current?.contains(target);
-			if (!clickedTrigger && !clickedMenu) {
-				setIsLanguageMenuOpen(false);
-			}
-		};
-
-		const handleEscape = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				setIsLanguageMenuOpen(false);
-			}
-		};
-
-		window.addEventListener("pointerdown", handlePointerDown);
-		window.addEventListener("keydown", handleEscape);
-
-		return () => {
-			window.removeEventListener("pointerdown", handlePointerDown);
-			window.removeEventListener("keydown", handleEscape);
-		};
-	}, [isLanguageMenuOpen]);
-
-	useEffect(() => {
-		if (!isLanguageMenuOpen || !languageTriggerRef.current) return;
-
-		const updatePosition = () => {
-			if (!languageTriggerRef.current) return;
-			const rect = languageTriggerRef.current.getBoundingClientRect();
-			const gap = 8;
-			const viewportPadding = 8;
-			const availableHeight = Math.max(80, rect.top - viewportPadding - gap);
-			const top = Math.max(viewportPadding, rect.top - gap - availableHeight);
-
-			setLanguageMenuStyle({
-				right: Math.max(viewportPadding, window.innerWidth - rect.right),
-				top,
-				maxHeight: availableHeight,
-			});
-		};
-
-		updatePosition();
-		window.addEventListener("resize", updatePosition);
-		window.addEventListener("scroll", updatePosition, true);
-
-		return () => {
-			window.removeEventListener("resize", updatePosition);
-			window.removeEventListener("scroll", updatePosition, true);
-		};
-	}, [isLanguageMenuOpen]);
-
-	useEffect(() => {
-		if (!isLanguageMenuOpen || !languageMenuPanelRef.current) return;
-		const id = requestAnimationFrame(() => {
-			if (languageMenuPanelRef.current) {
-				languageMenuPanelRef.current.scrollTop = 0;
-			}
+		const cleanup = window.electronAPI?.onTogglePauseShortcut?.(() => {
+			togglePause();
 		});
-		return () => cancelAnimationFrame(id);
-	}, [isLanguageMenuOpen]);
-
-	const hudMouseEventsEnabledRef = useRef<boolean | undefined>(undefined);
-	const setHudMouseEventsEnabled = useCallback((enabled: boolean) => {
-		if (hudMouseEventsEnabledRef.current === enabled) {
-			return;
-		}
-		hudMouseEventsEnabledRef.current = enabled;
-		window.electronAPI?.setHudOverlayIgnoreMouseEvents?.(!enabled);
-	}, []);
-
-	useEffect(() => {
-		setHudMouseEventsEnabled(false);
-		return () => {
-			window.electronAPI?.setHudOverlayIgnoreMouseEvents?.(false);
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "`" && recording) {
+				e.preventDefault();
+				togglePause();
+			}
 		};
-	}, [setHudMouseEventsEnabled]);
-
-	useEffect(() => {
-		setHudMouseEventsEnabled(isLanguageMenuOpen);
-	}, [isLanguageMenuOpen, setHudMouseEventsEnabled]);
+		window.addEventListener("keydown", onKey);
+		return () => {
+			cleanup?.();
+			window.removeEventListener("keydown", onKey);
+		};
+	}, [togglePause, recording]);
 
 	const [selectedSource, setSelectedSource] = useState("Screen");
 	const [hasSelectedSource, setHasSelectedSource] = useState(false);
-	const [, setRecordPointerDownCount] = useState(0);
 
 	useEffect(() => {
 		const checkSelectedSource = async () => {
@@ -326,24 +232,6 @@ export function LaunchWindow() {
 		return () => clearInterval(interval);
 	}, []);
 
-	useEffect(() => {
-		if (!canPauseRecording) return;
-		const cleanup = window.electronAPI?.onTogglePauseShortcut?.(() => {
-			togglePaused();
-		});
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "`" && recording) {
-				e.preventDefault();
-				togglePaused();
-			}
-		};
-		window.addEventListener("keydown", onKey);
-		return () => {
-			cleanup?.();
-			window.removeEventListener("keydown", onKey);
-		};
-	}, [togglePaused, recording, canPauseRecording]);
-
 	const openSourceSelector = () => {
 		if (window.electronAPI) {
 			window.electronAPI.openSourceSelector();
@@ -358,17 +246,13 @@ export function LaunchWindow() {
 		}
 
 		if (result.success && result.path) {
-			const setVideoPathResult = await nativeBridgeClient.project.setCurrentVideoPath(result.path);
-			if (!setVideoPathResult.success) {
-				console.error("Failed to set current video path:", setVideoPathResult);
-				return;
-			}
+			await window.electronAPI.setCurrentVideoPath(result.path);
 			await window.electronAPI.switchToEditor();
 		}
 	};
 
 	const openProjectFile = async () => {
-		const result = await nativeBridgeClient.project.loadProjectFile();
+		const result = await window.electronAPI.loadProjectFile();
 		if (result.canceled || !result.success) return;
 		await window.electronAPI.switchToEditor();
 	};
@@ -389,96 +273,37 @@ export function LaunchWindow() {
 			setMicrophoneEnabled(!microphoneEnabled);
 		}
 	};
-	const dragLastPositionRef = useRef<{ x: number; y: number } | null>(null);
-	const handleHudDragPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-		event.preventDefault();
-		event.stopPropagation();
-		setHudMouseEventsEnabled(true);
-		event.currentTarget.setPointerCapture(event.pointerId);
-		dragLastPositionRef.current = { x: event.screenX, y: event.screenY };
-	};
-	const handleHudDragPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-		const lastPosition = dragLastPositionRef.current;
-		if (!lastPosition) return;
-		const deltaX = event.screenX - lastPosition.x;
-		const deltaY = event.screenY - lastPosition.y;
-		dragLastPositionRef.current = { x: event.screenX, y: event.screenY };
-		window.electronAPI?.moveHudOverlayBy?.(deltaX, deltaY);
-	};
-	const handleHudDragPointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
-		dragLastPositionRef.current = null;
-		if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-			event.currentTarget.releasePointerCapture(event.pointerId);
-		}
-		setHudMouseEventsEnabled(false);
-	};
 
 	return (
-		// Root fills the HUD window only. Avoid w-screen/h-screen (100vw/100vh):
-		// 100vw can exceed the inner layout width when scrollbars affect the
-		// viewport (notably on Windows), causing a horizontal scrollbar once the
-		// recording toolbar widened (issue #305).
-		<div
-			className={`h-full w-full min-w-0 max-w-full overflow-x-hidden overflow-y-hidden bg-transparent ${styles.electronDrag}`}
-			onPointerMove={(event) => {
-				const target = event.target as HTMLElement | null;
-				const shouldCapture =
-					isLanguageMenuOpen || Boolean(target?.closest("[data-hud-interactive='true']"));
-				setHudMouseEventsEnabled(shouldCapture);
-			}}
-			onPointerLeave={() => {
-				if (!isLanguageMenuOpen) {
-					setHudMouseEventsEnabled(false);
-				}
-			}}
-		>
-			{systemLocaleSuggestion && (
-				<div
-					data-hud-interactive="true"
-					className={`fixed top-8 left-1/2 z-30 w-[calc(100vw-1rem)] max-w-[520px] -translate-x-1/2 rounded-xl border border-white/15 bg-[rgba(20,20,28,0.95)] p-3 shadow-2xl backdrop-blur-xl text-white animate-in fade-in-0 zoom-in-95 duration-200 ${styles.electronNoDrag}`}
+		<div className={`w-screen h-screen bg-transparent ${styles.electronDrag}`}>
+			{/* Language switcher — top-left, beside traffic lights */}
+			<div
+				className={`fixed top-2 flex items-center gap-1 px-2 py-1 rounded-md text-white/50 hover:text-white/90 hover:bg-white/10 transition-all duration-150 ${isMac ? "left-[72px]" : "left-2"} ${styles.electronNoDrag}`}
+			>
+				<Languages size={14} />
+				<select
+					value={locale}
+					onChange={(e) => setLocale(e.target.value as Locale)}
+					className="bg-transparent text-[11px] font-medium outline-none cursor-pointer appearance-none pr-1"
+					style={{ color: "inherit" }}
 				>
-					<div className="text-[13px] font-semibold text-white">
-						{t("systemLanguagePrompt.title")}
-					</div>
-					<div className="mt-1 text-[11px] leading-relaxed text-white/75">
-						{t("systemLanguagePrompt.description", {
-							language: suggestedLanguageName,
-						})}
-					</div>
-					<div className="mt-3 flex items-center justify-end gap-2">
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={dismissSystemLocaleSuggestion}
-							className="h-7 text-xs text-white/80 hover:bg-white/10 hover:text-white"
-						>
-							{t("systemLanguagePrompt.keepDefault")}
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							onClick={acceptSystemLocaleSuggestion}
-							className="h-7 text-xs bg-white text-[#10121b] hover:bg-white/90"
-						>
-							{t("systemLanguagePrompt.switch", {
-								language: suggestedLanguageName,
-							})}
-						</Button>
-					</div>
-				</div>
-			)}
+					{SUPPORTED_LOCALES.map((loc) => (
+						<option key={loc} value={loc} className="bg-[#1c1c24] text-white">
+							{getLocaleName(loc)}
+						</option>
+					))}
+				</select>
+			</div>
 
 			{/* Device selectors — fixed above HUD bar, viewport-relative, never clipped */}
 			{(showMicControls || showWebcamControls) && (
 				<div
-					data-hud-interactive="true"
-					className={`fixed bottom-[68px] left-1/2 -translate-x-1/2 flex items-center gap-2 animate-mic-panel-in ${styles.electronNoDrag}`}
+					className={`fixed bottom-[60px] left-1/2 -translate-x-1/2 flex items-center gap-2 animate-mic-panel-in ${styles.electronNoDrag}`}
 				>
 					{/* Mic selector */}
 					{showMicControls && (
 						<div
-							className={`flex h-9 items-center gap-2 overflow-hidden rounded-xl border border-white/[0.08] bg-[#0b0c10]/90 px-3 py-1.5 shadow-[0_18px_42px_rgba(0,0,0,0.4)] backdrop-blur-2xl transition-all duration-300 ${!micExpanded ? "opacity-60 grayscale-[0.5]" : "opacity-100"}`}
+							className={`flex items-center gap-2 px-3 py-1.5 h-[36px] bg-gradient-to-br from-[rgba(28,28,36,0.97)] to-[rgba(18,18,26,0.96)] backdrop-blur-[24px] border border-white/10 rounded-xl shadow-2xl transition-all duration-300 overflow-hidden ${!micExpanded ? "opacity-60 grayscale-[0.5]" : "opacity-100"}`}
 							onMouseEnter={() => setIsMicHovered(true)}
 							onMouseLeave={() => setIsMicHovered(false)}
 							onFocus={() => setIsMicFocused(true)}
@@ -494,10 +319,8 @@ export function LaunchWindow() {
 								<select
 									value={microphoneDeviceId || selectedMicId}
 									onChange={(e) => {
-										const selectedDevice = micDevices.find((d) => d.deviceId === e.target.value);
 										setSelectedMicId(e.target.value);
 										setMicrophoneDeviceId(e.target.value);
-										setMicrophoneDeviceName(selectedDevice?.label);
 									}}
 									className={`w-full appearance-none bg-white/5 text-white text-[11px] rounded-lg pl-2 pr-6 py-1 border border-white/10 outline-none hover:bg-white/10 transition-colors cursor-pointer ${!micExpanded ? "sr-only" : ""}`}
 								>
@@ -524,7 +347,7 @@ export function LaunchWindow() {
 					{/* Webcam selector */}
 					{showWebcamControls && (
 						<div
-							className={`flex h-9 items-center gap-2 overflow-hidden rounded-xl border border-white/[0.08] bg-[#0b0c10]/90 px-3 py-1.5 shadow-[0_18px_42px_rgba(0,0,0,0.4)] backdrop-blur-2xl transition-all duration-300 ${!webcamExpanded ? "opacity-60 grayscale-[0.5]" : "opacity-100"}`}
+							className={`flex items-center gap-2 px-3 py-1.5 h-[36px] bg-gradient-to-br from-[rgba(28,28,36,0.97)] to-[rgba(18,18,26,0.96)] backdrop-blur-[24px] border border-white/10 rounded-xl shadow-2xl transition-all duration-300 overflow-hidden ${!webcamExpanded ? "opacity-60 grayscale-[0.5]" : "opacity-100"}`}
 							onMouseEnter={() => setIsWebcamHovered(true)}
 							onMouseLeave={() => setIsWebcamHovered(false)}
 							onFocus={() => setIsWebcamFocused(true)}
@@ -555,12 +378,8 @@ export function LaunchWindow() {
 											<select
 												value={webcamDeviceId || selectedCameraId}
 												onChange={(e) => {
-													const device = cameraDevices.find(
-														(item) => item.deviceId === e.target.value,
-													);
 													setSelectedCameraId(e.target.value);
 													setWebcamDeviceId(e.target.value);
-													setWebcamDeviceName(device?.label);
 												}}
 												className="w-full appearance-none bg-white/5 text-white text-[11px] rounded-lg pl-2 pr-6 py-1 border border-white/10 outline-none hover:bg-white/10 transition-colors cursor-pointer"
 											>
@@ -584,10 +403,8 @@ export function LaunchWindow() {
 									<select
 										value={webcamDeviceId || selectedCameraId}
 										onChange={(e) => {
-											const device = cameraDevices.find((item) => item.deviceId === e.target.value);
 											setSelectedCameraId(e.target.value);
 											setWebcamDeviceId(e.target.value);
-											setWebcamDeviceName(device?.label);
 										}}
 										className="sr-only"
 									>
@@ -606,45 +423,27 @@ export function LaunchWindow() {
 
 			{/* HUD bar — fixed at bottom center, viewport-relative, never moves */}
 			<div
-				data-hud-interactive="true"
-				className={`fixed bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-2xl border border-white/[0.10] bg-[#07080a]/90 px-2 py-1.5 shadow-[0_20px_60px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-2xl backdrop-saturate-[140%]`}
-				onPointerEnter={() => setHudMouseEventsEnabled(true)}
-				onPointerDown={() => setHudMouseEventsEnabled(true)}
-				onMouseEnter={() => setHudMouseEventsEnabled(true)}
-				onMouseLeave={() => {
-					if (!isLanguageMenuOpen) {
-						setHudMouseEventsEnabled(false);
-					}
-				}}
+				className={`fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2 py-1.5 rounded-full shadow-hud-bar bg-gradient-to-br from-[rgba(28,28,36,0.97)] to-[rgba(18,18,26,0.96)] backdrop-blur-[16px] backdrop-saturate-[140%] border border-[rgba(80,80,120,0.25)]`}
 			>
 				{/* Drag handle */}
-				<div
-					className={`flex h-8 w-7 cursor-grab items-center justify-center active:cursor-grabbing ${styles.electronNoDrag}`}
-					onPointerDown={handleHudDragPointerDown}
-					onPointerMove={handleHudDragPointerMove}
-					onPointerUp={handleHudDragPointerEnd}
-					onPointerCancel={handleHudDragPointerEnd}
-				>
+				<div className={`flex items-center px-1 ${styles.electronDrag}`}>
 					{getIcon("drag", "text-white/30")}
 				</div>
 
 				{/* Source selector */}
 				<button
-					className={`${hudGroupClasses} h-8 px-2.5 ${styles.electronNoDrag}`}
+					className={`${hudGroupClasses} p-2 ${styles.electronNoDrag}`}
 					onClick={openSourceSelector}
 					disabled={recording}
 					title={selectedSource}
 				>
 					{getIcon("monitor", "text-white/80")}
-					<span className="max-w-[86px] truncate text-[11px] font-medium text-white/75">
-						{selectedSource}
-					</span>
+					<span className="text-white/70 text-[11px] max-w-[72px] truncate">{selectedSource}</span>
 				</button>
 
 				{/* Audio controls group */}
 				<div className={`${hudGroupClasses} ${styles.electronNoDrag}`}>
 					<button
-						data-testid="launch-system-audio-button"
 						className={`${hudIconBtnClasses} ${systemAudioEnabled ? "drop-shadow-[0_0_4px_rgba(74,222,128,0.4)]" : ""}`}
 						onClick={() => !recording && setSystemAudioEnabled(!systemAudioEnabled)}
 						disabled={recording}
@@ -657,224 +456,111 @@ export function LaunchWindow() {
 							: getIcon("volumeOff", "text-white/40")}
 					</button>
 					<button
-						data-testid="launch-microphone-button"
 						className={`${hudIconBtnClasses} ${microphoneEnabled ? "drop-shadow-[0_0_4px_rgba(74,222,128,0.4)]" : ""}`}
 						onClick={toggleMicrophone}
 						disabled={recording}
 						title={microphoneEnabled ? t("audio.disableMicrophone") : t("audio.enableMicrophone")}
-						onPointerDown={() => {
-							setRecordPointerDownCount((count) => count + 1);
-						}}
 					>
 						{microphoneEnabled
 							? getIcon("micOn", "text-green-400")
 							: getIcon("micOff", "text-white/40")}
 					</button>
 					<button
-						data-testid="launch-webcam-button"
 						className={`${hudIconBtnClasses} ${webcamEnabled ? "drop-shadow-[0_0_4px_rgba(74,222,128,0.4)]" : ""}`}
 						onClick={async () => {
 							await setWebcamEnabled(!webcamEnabled);
 						}}
-						disabled={recording}
 						title={webcamEnabled ? t("webcam.disableWebcam") : t("webcam.enableWebcam")}
 					>
 						{webcamEnabled
 							? getIcon("webcamOn", "text-green-400")
 							: getIcon("webcamOff", "text-white/40")}
 					</button>
-					{supportsCursorModeToggle && (
-						<button
-							data-testid="launch-cursor-mode-button"
-							className={`${hudIconBtnClasses} ${
-								cursorCaptureMode === "editable-overlay"
-									? "drop-shadow-[0_0_4px_rgba(74,222,128,0.4)]"
-									: ""
-							}`}
-							onClick={() =>
-								!recording &&
-								setCursorCaptureMode(
-									cursorCaptureMode === "editable-overlay" ? "system" : "editable-overlay",
-								)
-							}
-							disabled={recording}
-							title={
-								cursorCaptureMode === "editable-overlay"
-									? t("cursor.useSystemCursor")
-									: t("cursor.useEditableCursor")
-							}
-						>
-							{getIcon(
-								"cursor",
-								cursorCaptureMode === "editable-overlay" ? "text-green-400" : "text-white/40",
-							)}
-						</button>
-					)}
 				</div>
 
 				{/* Record/Stop group */}
 				<button
-					data-testid="launch-record-button"
-					className={`flex items-center justify-center rounded-full p-2 transition-[min-width,background-color] duration-150 ${recording ? "min-w-[78px]" : "min-w-[36px]"} ${styles.electronNoDrag} ${
-						recording
-							? paused
-								? "bg-amber-500/10 hover:bg-amber-500/15"
-								: "bg-red-500/12 hover:bg-red-500/16"
-							: "bg-white/[0.06] hover:bg-white/[0.10]"
+					className={`flex items-center gap-0.5 rounded-full p-2 transition-colors duration-150 ${styles.electronNoDrag} ${
+						recording ? "animate-record-pulse bg-red-500/10" : "bg-white/5 hover:bg-white/[0.08]"
 					}`}
 					onClick={toggleRecording}
 					disabled={!hasSelectedSource && !recording}
 					style={{ flex: "0 0 auto" }}
 				>
-					<div className={`flex items-center justify-center ${recording ? "gap-1.5" : ""}`}>
-						{recording
-							? getIcon("stop", paused ? "text-amber-400" : "text-red-400")
-							: getIcon("record", hasSelectedSource ? "text-white/80" : "text-white/30")}
-						{recording && (
-							<span
-								className={`${paused ? "text-amber-400" : "text-red-400"} inline-block w-[34px] text-left text-xs font-semibold tabular-nums`}
-							>
-								{formatTimePadded(elapsedSeconds)}
+					{recording ? (
+						<>
+							{getIcon("stop", "text-red-400")}
+							<span className="text-red-400 text-xs font-semibold tabular-nums">
+								{formatTimePadded(elapsed)}
 							</span>
-						)}
-					</div>
+						</>
+					) : (
+						getIcon("record", hasSelectedSource ? "text-white/80" : "text-white/30")
+					)}
 				</button>
 
+				{/* Pause / Resume recording */}
 				{recording && (
-					<div className={`flex items-center gap-0.5 ${styles.electronNoDrag}`}>
-						{canPauseRecording && (
-							<Tooltip
-								content={paused ? t("tooltips.resumeRecording") : t("tooltips.pauseRecording")}
-							>
-								<button className={hudAuxIconBtnClasses} onClick={togglePaused}>
-									{getIcon(
-										paused ? "resume" : "pause",
-										paused ? "text-amber-400" : "text-white/60",
-									)}
-								</button>
-							</Tooltip>
-						)}
-						<Tooltip content={t("tooltips.restartRecording")}>
-							<button className={hudAuxIconBtnClasses} onClick={restartRecording}>
-								{getIcon("restart", "text-white/60")}
-							</button>
-						</Tooltip>
-						<Tooltip content={t("tooltips.cancelRecording")}>
-							<button className={hudAuxIconBtnClasses} onClick={cancelRecording}>
-								{getIcon("cancel", "text-white/60")}
-							</button>
-						</Tooltip>
-					</div>
+					<Tooltip content={paused ? "Resume recording ( ` )" : "Pause recording ( ` )"}>
+						<button
+							className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
+							onClick={togglePause}
+						>
+							{paused ? getIcon("play", "text-green-400") : getIcon("pause", "text-white/70")}
+						</button>
+					</Tooltip>
 				)}
 
-				{!recording && (
-					<>
-						{/* Open video file */}
-						<Tooltip content={t("tooltips.openVideoFile")}>
-							<button
-								data-testid="launch-open-video-button"
-								className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
-								onClick={openVideoFile}
-							>
-								{getIcon("videoFile", "text-white/60")}
-							</button>
-						</Tooltip>
-
-						{/* Open project */}
-						<Tooltip content={t("tooltips.openProject")}>
-							<button
-								data-testid="launch-open-project-button"
-								className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
-								onClick={openProjectFile}
-							>
-								{getIcon("folder", "text-white/60")}
-							</button>
-						</Tooltip>
-					</>
+				{/* Restart recording */}
+				{recording && (
+					<Tooltip content={t("tooltips.restartRecording")}>
+						<button
+							className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
+							onClick={restartRecording}
+						>
+							{getIcon("restart", "text-white/60")}
+						</button>
+					</Tooltip>
 				)}
 
-				{/* Right sidebar controls */}
-				<div className={`${hudSidebarClasses} ${styles.electronNoDrag}`}>
-					<div className={`${styles.languageMenuContainer} ${styles.electronNoDrag}`}>
-						<button
-							ref={languageTriggerRef}
-							type="button"
-							aria-label={t("language")}
-							aria-expanded={isLanguageMenuOpen}
-							aria-haspopup="menu"
-							onClick={() => setIsLanguageMenuOpen((open) => !open)}
-							className={`flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.045] px-2 text-white/85 shadow-none transition-colors hover:bg-white/10 ${styles.electronNoDrag}`}
-						>
-							<Languages size={13} className="text-white/70" />
-							<span className="max-w-[54px] truncate text-[10px] font-semibold text-white/75">
-								{activeLanguageLabel}
-							</span>
-						</button>
-					</div>
+				{/* Open video file */}
+				<Tooltip content={t("tooltips.openVideoFile")}>
+					<button
+						className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
+						onClick={openVideoFile}
+						disabled={recording}
+					>
+						{getIcon("videoFile", "text-white/60")}
+					</button>
+				</Tooltip>
 
-					{isLanguageMenuOpen
-						? createPortal(
-								<div
-									ref={languageMenuPanelRef}
-									data-hud-interactive="true"
-									role="menu"
-									className={`${styles.languageMenuPanel} ${styles.languageMenuScroll} ${styles.electronNoDrag}`}
-									style={
-										{
-											WebkitAppRegion: "no-drag",
-											pointerEvents: "auto",
-											right: `${languageMenuStyle.right}px`,
-											top: `${languageMenuStyle.top}px`,
-											maxHeight: `${languageMenuStyle.maxHeight}px`,
-										} as React.CSSProperties
-									}
-									onPointerDown={(event) => event.stopPropagation()}
-									onPointerEnter={() => setHudMouseEventsEnabled(true)}
-									onPointerMove={() => setHudMouseEventsEnabled(true)}
-									onWheel={(event) => {
-										setHudMouseEventsEnabled(true);
-										event.stopPropagation();
-									}}
-								>
-									{availableLocales.map((loc) => (
-										<button
-											key={loc}
-											type="button"
-											role="menuitemradio"
-											aria-checked={loc === locale}
-											onClick={() => {
-												setLocale(loc);
-												resolveSystemLocaleSuggestion();
-												setIsLanguageMenuOpen(false);
-											}}
-											className={`${styles.languageMenuItem} ${loc === locale ? styles.languageMenuItemActive : ""}`}
-										>
-											<span className="truncate">{getLocaleName(loc)}</span>
-											{loc === locale ? <Check size={11} className="text-white/85" /> : null}
-										</button>
-									))}
-								</div>,
-								document.body,
-							)
-						: null}
+				{/* Open project */}
+				<Tooltip content={t("tooltips.openProject")}>
+					<button
+						className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
+						onClick={openProjectFile}
+						disabled={recording}
+					>
+						{getIcon("folder", "text-white/60")}
+					</button>
+				</Tooltip>
 
-					{/* Window controls */}
-					<div className="flex items-center gap-0.5">
-						<button
-							className={windowBtnClasses}
-							title={t("tooltips.hideHUD")}
-							onClick={sendHudOverlayHide}
-						>
-							{getIcon("minimize", "text-white")}
-						</button>
-						<button
-							className={windowBtnClasses}
-							title={t("tooltips.closeApp")}
-							onClick={sendHudOverlayClose}
-						>
-							{getIcon("close", "text-white")}
-						</button>
-					</div>
+				{/* Window controls */}
+				<div className={`flex items-center gap-0.5 ${styles.electronNoDrag}`}>
+					<button
+						className={windowBtnClasses}
+						title={t("tooltips.hideHUD")}
+						onClick={sendHudOverlayHide}
+					>
+						{getIcon("minimize", "text-white")}
+					</button>
+					<button
+						className={windowBtnClasses}
+						title={t("tooltips.closeApp")}
+						onClick={sendHudOverlayClose}
+					>
+						{getIcon("close", "text-white")}
+					</button>
 				</div>
 			</div>
 		</div>

@@ -71,6 +71,7 @@ export function createHudOverlayWindow(): BrowserWindow {
 		...(process.platform === "darwin" && { type: "panel" }),
 		webPreferences: {
 			preload: path.join(__dirname, "preload.mjs"),
+			additionalArguments: [ASSET_BASE_URL_ARG],
 			nodeIntegration: false,
 			contextIsolation: true,
 			backgroundThrottling: false,
@@ -130,6 +131,7 @@ export function createEditorWindow(): BrowserWindow {
 		show: !HEADLESS,
 		webPreferences: {
 			preload: path.join(__dirname, "preload.mjs"),
+			additionalArguments: [ASSET_BASE_URL_ARG],
 			nodeIntegration: false,
 			contextIsolation: true,
 			webSecurity: false,
@@ -172,6 +174,7 @@ export function createSourceSelectorWindow(): BrowserWindow {
 		backgroundColor: "#00000000",
 		webPreferences: {
 			preload: path.join(__dirname, "preload.mjs"),
+			additionalArguments: [ASSET_BASE_URL_ARG],
 			nodeIntegration: false,
 			contextIsolation: true,
 		},

@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { constants as fsConstants } from "node:fs";
+import { createWriteStream, constants as fsConstants, type WriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -2060,6 +2060,187 @@ export function registerIpcHandlers(
 				console.error("Failed to attach native macOS webcam recording:", error);
 				return {
 					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		},
+	);
+
+	type RecordingStream = {
+		path: string;
+		fileName: string;
+		stream: WriteStream;
+		writing: Promise<void>;
+	};
+	const recordingStreams = new Map<string, RecordingStream>();
+
+	function makeStreamKey(recordingId: string, kind: "screen" | "webcam") {
+		return `${recordingId}::${kind}`;
+	}
+
+	async function closeRecordingStream(entry: RecordingStream): Promise<void> {
+		await entry.writing.catch(() => {});
+		await new Promise<void>((resolve) => {
+			entry.stream.end(() => resolve());
+		});
+	}
+
+	ipcMain.handle(
+		"start-recording-stream",
+		async (_, recordingId: string, fileName: string, kind: "screen" | "webcam" = "screen") => {
+			try {
+				const key = makeStreamKey(recordingId, kind);
+				const existing = recordingStreams.get(key);
+				if (existing) {
+					await closeRecordingStream(existing);
+					recordingStreams.delete(key);
+				}
+				const outputPath = resolveRecordingOutputPath(fileName);
+				await fs.mkdir(path.dirname(outputPath), { recursive: true });
+				const stream = createWriteStream(outputPath);
+				const writing = new Promise<void>((resolve, reject) => {
+					stream.once("error", reject);
+					stream.once("open", () => resolve());
+				});
+				await writing;
+				recordingStreams.set(key, { path: outputPath, fileName, stream, writing });
+				return { success: true, path: outputPath };
+			} catch (error) {
+				console.error("Failed to start recording stream:", error);
+				return {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"append-recording-chunk",
+		async (_, recordingId: string, chunk: ArrayBuffer, kind: "screen" | "webcam" = "screen") => {
+			const key = makeStreamKey(recordingId, kind);
+			const entry = recordingStreams.get(key);
+			if (!entry) {
+				return { success: false, error: "Recording stream not found" };
+			}
+			const writePromise = new Promise<void>((resolve, reject) => {
+				entry.stream.write(Buffer.from(chunk), (err) => {
+					if (err) reject(err);
+					else resolve();
+				});
+			});
+			entry.writing = entry.writing.then(() => writePromise);
+			try {
+				await writePromise;
+				return { success: true };
+			} catch (error) {
+				console.error("Failed to append recording chunk:", error);
+				return {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"finalize-recording-stream",
+		async (_, recordingId: string, kind: "screen" | "webcam" = "screen") => {
+			const key = makeStreamKey(recordingId, kind);
+			const entry = recordingStreams.get(key);
+			if (!entry) {
+				return { success: false, error: "Recording stream not found" };
+			}
+			try {
+				await closeRecordingStream(entry);
+				recordingStreams.delete(key);
+				return { success: true, path: entry.path, fileName: entry.fileName };
+			} catch (error) {
+				console.error("Failed to finalize recording stream:", error);
+				recordingStreams.delete(key);
+				return {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"discard-recording-stream",
+		async (_, recordingId: string, kind: "screen" | "webcam" = "screen") => {
+			const key = makeStreamKey(recordingId, kind);
+			const entry = recordingStreams.get(key);
+			if (!entry) {
+				return { success: true };
+			}
+			try {
+				await closeRecordingStream(entry);
+				await fs.unlink(entry.path).catch(() => {});
+			} finally {
+				recordingStreams.delete(key);
+			}
+			return { success: true };
+		},
+	);
+
+	ipcMain.handle(
+		"commit-streamed-recording",
+		async (
+			_,
+			payload: {
+				recordingId: string;
+				screenFileName: string;
+				webcamFileName?: string;
+				createdAt?: number;
+				cursorCaptureMode?: CursorCaptureMode;
+			},
+		) => {
+			try {
+				const screenVideoPath = resolveRecordingOutputPath(payload.screenFileName);
+				const webcamVideoPath = payload.webcamFileName
+					? resolveRecordingOutputPath(payload.webcamFileName)
+					: undefined;
+				const createdAt =
+					typeof payload.createdAt === "number" && Number.isFinite(payload.createdAt)
+						? payload.createdAt
+						: Date.now();
+				const cursorCaptureMode = normalizeCursorCaptureMode(payload.cursorCaptureMode);
+
+				const session: RecordingSession = webcamVideoPath
+					? {
+							screenVideoPath,
+							webcamVideoPath,
+							createdAt,
+							...(cursorCaptureMode ? { cursorCaptureMode } : {}),
+						}
+					: {
+							screenVideoPath,
+							createdAt,
+							...(cursorCaptureMode ? { cursorCaptureMode } : {}),
+						};
+				setCurrentRecordingSessionState(session);
+				currentProjectPath = null;
+
+				await writePendingCursorTelemetry(screenVideoPath);
+
+				const sessionManifestPath = path.join(
+					RECORDINGS_DIR,
+					`${path.parse(payload.screenFileName).name}${RECORDING_SESSION_SUFFIX}`,
+				);
+				await fs.writeFile(sessionManifestPath, JSON.stringify(session, null, 2), "utf-8");
+
+				return {
+					success: true,
+					path: screenVideoPath,
+					session,
+					message: "Streamed recording committed",
+				};
+			} catch (error) {
+				console.error("Failed to commit streamed recording:", error);
+				return {
+					success: false,
+					message: "Failed to commit streamed recording",
 					error: error instanceof Error ? error.message : String(error),
 				};
 			}

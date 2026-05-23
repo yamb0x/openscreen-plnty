@@ -81,6 +81,52 @@ interface Window {
 			message?: string;
 			error?: string;
 		}>;
+		startRecordingStream: (
+			recordingId: string,
+			fileName: string,
+			kind?: "screen" | "webcam",
+		) => Promise<{
+			success: boolean;
+			path?: string;
+			error?: string;
+		}>;
+		appendRecordingChunk: (
+			recordingId: string,
+			chunk: ArrayBuffer,
+			kind?: "screen" | "webcam",
+		) => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
+		finalizeRecordingStream: (
+			recordingId: string,
+			kind?: "screen" | "webcam",
+		) => Promise<{
+			success: boolean;
+			path?: string;
+			fileName?: string;
+			error?: string;
+		}>;
+		discardRecordingStream: (
+			recordingId: string,
+			kind?: "screen" | "webcam",
+		) => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
+		commitStreamedRecording: (payload: {
+			recordingId: string;
+			screenFileName: string;
+			webcamFileName?: string;
+			createdAt?: number;
+			cursorCaptureMode?: import("../src/lib/recordingSession").CursorCaptureMode;
+		}) => Promise<{
+			success: boolean;
+			path?: string;
+			session?: import("../src/lib/recordingSession").RecordingSession;
+			message?: string;
+			error?: string;
+		}>;
 		getRecordedVideoPath: () => Promise<{
 			success: boolean;
 			path?: string;

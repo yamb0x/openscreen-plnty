@@ -64,6 +64,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	storeRecordedSession: (payload: StoreRecordedSessionInput) => {
 		return ipcRenderer.invoke("store-recorded-session", payload);
 	},
+	startRecordingStream: (
+		recordingId: string,
+		fileName: string,
+		kind: "screen" | "webcam" = "screen",
+	) => {
+		return ipcRenderer.invoke("start-recording-stream", recordingId, fileName, kind);
+	},
+	appendRecordingChunk: (
+		recordingId: string,
+		chunk: ArrayBuffer,
+		kind: "screen" | "webcam" = "screen",
+	) => {
+		return ipcRenderer.invoke("append-recording-chunk", recordingId, chunk, kind);
+	},
+	finalizeRecordingStream: (recordingId: string, kind: "screen" | "webcam" = "screen") => {
+		return ipcRenderer.invoke("finalize-recording-stream", recordingId, kind);
+	},
+	discardRecordingStream: (recordingId: string, kind: "screen" | "webcam" = "screen") => {
+		return ipcRenderer.invoke("discard-recording-stream", recordingId, kind);
+	},
+	commitStreamedRecording: (payload: {
+		recordingId: string;
+		screenFileName: string;
+		webcamFileName?: string;
+		createdAt?: number;
+		cursorCaptureMode?: import("../src/lib/recordingSession").CursorCaptureMode;
+	}) => {
+		return ipcRenderer.invoke("commit-streamed-recording", payload);
+	},
 
 	getRecordedVideoPath: () => {
 		return ipcRenderer.invoke("get-recorded-video-path");

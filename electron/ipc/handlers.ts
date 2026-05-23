@@ -2154,7 +2154,19 @@ export function registerIpcHandlers(
 			try {
 				await closeRecordingStream(entry);
 				recordingStreams.delete(key);
-				return { success: true, path: entry.path, fileName: entry.fileName };
+				let bytesWritten = 0;
+				try {
+					const stat = await fs.stat(entry.path);
+					bytesWritten = stat.size;
+				} catch {
+					bytesWritten = 0;
+				}
+				return {
+					success: true,
+					path: entry.path,
+					fileName: entry.fileName,
+					bytesWritten,
+				};
 			} catch (error) {
 				console.error("Failed to finalize recording stream:", error);
 				recordingStreams.delete(key);
@@ -2168,17 +2180,25 @@ export function registerIpcHandlers(
 
 	ipcMain.handle(
 		"discard-recording-stream",
-		async (_, recordingId: string, kind: "screen" | "webcam" = "screen") => {
+		async (_, recordingId: string, kind: "screen" | "webcam" = "screen", fileName?: string) => {
 			const key = makeStreamKey(recordingId, kind);
 			const entry = recordingStreams.get(key);
-			if (!entry) {
+			if (entry) {
+				try {
+					await closeRecordingStream(entry);
+					await fs.unlink(entry.path).catch(() => {});
+				} finally {
+					recordingStreams.delete(key);
+				}
 				return { success: true };
 			}
-			try {
-				await closeRecordingStream(entry);
-				await fs.unlink(entry.path).catch(() => {});
-			} finally {
-				recordingStreams.delete(key);
+			if (fileName) {
+				try {
+					const fallbackPath = resolveRecordingOutputPath(fileName);
+					await fs.unlink(fallbackPath).catch(() => {});
+				} catch {
+					// Invalid fileName — nothing to clean up.
+				}
 			}
 			return { success: true };
 		},

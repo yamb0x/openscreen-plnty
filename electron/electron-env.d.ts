@@ -105,11 +105,13 @@ interface Window {
 			success: boolean;
 			path?: string;
 			fileName?: string;
+			bytesWritten?: number;
 			error?: string;
 		}>;
 		discardRecordingStream: (
 			recordingId: string,
 			kind?: "screen" | "webcam",
+			fileName?: string,
 		) => Promise<{
 			success: boolean;
 			error?: string;

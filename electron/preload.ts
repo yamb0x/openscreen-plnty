@@ -81,8 +81,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	finalizeRecordingStream: (recordingId: string, kind: "screen" | "webcam" = "screen") => {
 		return ipcRenderer.invoke("finalize-recording-stream", recordingId, kind);
 	},
-	discardRecordingStream: (recordingId: string, kind: "screen" | "webcam" = "screen") => {
-		return ipcRenderer.invoke("discard-recording-stream", recordingId, kind);
+	discardRecordingStream: (
+		recordingId: string,
+		kind: "screen" | "webcam" = "screen",
+		fileName?: string,
+	) => {
+		return ipcRenderer.invoke("discard-recording-stream", recordingId, kind, fileName);
 	},
 	commitStreamedRecording: (payload: {
 		recordingId: string;

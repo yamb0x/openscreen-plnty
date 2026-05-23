@@ -108,13 +108,18 @@ async function createRecorderHandle(
 			try {
 				await chunkChain;
 				if (recorderFailed) {
-					await window.electronAPI.discardRecordingStream(recordingStreamId, kind);
+					await window.electronAPI.discardRecordingStream(recordingStreamId, kind, fileName);
 					resolve(null);
 					return;
 				}
 				const result = await window.electronAPI.finalizeRecordingStream(recordingStreamId, kind);
 				if (!result.success || !result.path) {
 					reject(new Error(`Failed to finalize recording: ${result.error ?? "unknown"}`));
+					return;
+				}
+				if (!result.bytesWritten || result.bytesWritten === 0) {
+					await window.electronAPI.discardRecordingStream(recordingStreamId, kind, fileName);
+					resolve(null);
 					return;
 				}
 				resolve(result.path);
@@ -124,7 +129,16 @@ async function createRecorderHandle(
 		};
 	});
 
-	recorder.start(RECORDER_TIMESLICE_MS);
+	try {
+		recorder.start(RECORDER_TIMESLICE_MS);
+	} catch (error) {
+		await window.electronAPI
+			.discardRecordingStream(recordingStreamId, kind, fileName)
+			.catch(() => {});
+		throw error instanceof Error
+			? error
+			: new Error(`Failed to start MediaRecorder: ${String(error)}`);
+	}
 	return { recorder, fileName, finalizedPathPromise };
 }
 
@@ -260,13 +274,16 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						webcamPath = await activeWebcamRecorder.finalizedPathPromise.catch(() => null);
 					}
 
+					const screenFileName = activeScreenRecorder.fileName;
+					const webcamFileName = activeWebcamRecorder?.fileName;
+
 					if (discardRecordingId.current === activeRecordingId) {
 						await window.electronAPI
-							.discardRecordingStream(recordingStreamId, "screen")
+							.discardRecordingStream(recordingStreamId, "screen", screenFileName)
 							.catch(() => {});
-						if (activeWebcamRecorder) {
+						if (activeWebcamRecorder && webcamFileName) {
 							await window.electronAPI
-								.discardRecordingStream(recordingStreamId, "webcam")
+								.discardRecordingStream(recordingStreamId, "webcam", webcamFileName)
 								.catch(() => {});
 						}
 						return;
@@ -277,8 +294,6 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						return;
 					}
 
-					const screenFileName = activeScreenRecorder.fileName;
-					const webcamFileName = activeWebcamRecorder?.fileName;
 					const result = await window.electronAPI.commitStreamedRecording({
 						recordingId: recordingStreamId,
 						screenFileName,
@@ -301,11 +316,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				} catch (error) {
 					console.error("Error saving recording:", error);
 					await window.electronAPI
-						.discardRecordingStream(recordingStreamId, "screen")
+						.discardRecordingStream(recordingStreamId, "screen", activeScreenRecorder.fileName)
 						.catch(() => {});
 					if (activeWebcamRecorder) {
 						await window.electronAPI
-							.discardRecordingStream(recordingStreamId, "webcam")
+							.discardRecordingStream(recordingStreamId, "webcam", activeWebcamRecorder.fileName)
 							.catch(() => {});
 					}
 				} finally {
